@@ -118,9 +118,16 @@ load_texture :: proc(name: cstring) -> ^SDL.Texture {
         return existing
     }
 
-    added := IMG.LoadTexture(renderer, name)
-    texture_lookup[string(name)] = added
-    return added
+    surface := IMG.Load(name)
+
+    if surface == nil {
+        return nil;
+    }
+
+    SDL.SetColorKey(surface, SDL.RLEACCEL, SDL.MapRGB(surface.format, 116, 116, 116))
+    texture := SDL.CreateTextureFromSurface(renderer, surface)
+    texture_lookup[string(name)] = texture
+    return texture
 }
 
 Sprite :: struct {
@@ -148,7 +155,7 @@ main :: proc() {
     IMG.Init(IMG.INIT_PNG);
     TTF.Init();
 
-    texture := load_texture("linktrans.png");
+    texture := load_texture("link.png");
 
     spritedown := init_sprite(texture, Rect{1, 11, 16, 16}, 1)
     spriterightleft := init_sprite(texture, Rect{35, 11, 16, 16}, 1)
