@@ -146,6 +146,102 @@ init_sprite :: proc(texture: ^SDL.Texture, r: Rect, sep: f32) -> Sprite {
     return s
 }
 
+AnimatedSprite :: struct {
+    using sprite: Sprite,
+    num_frames: u32,
+    frame_time: f32,
+    flip: bool,
+}
+
+Animator :: struct {
+    num_frames: u32,
+    frame: u32,
+    frame_time: f32,
+    timer: f32,
+}
+
+animator_update :: proc(a: ^Animator, dt: f32) {
+    a.timer += dt
+
+    if (a.timer > a.frame_time) {
+        a.timer = 0
+        a.frame = a.frame + 1
+
+        if a.frame >= a.num_frames {
+            a.frame = 0
+        }
+    }
+}
+
+Entity :: struct {
+    pos: Vec2,
+    animation: ^AnimatedSprite,
+    animator: Animator,
+}
+
+Player :: struct {
+    using entity: Entity,
+    anim_up: AnimatedSprite,
+    anim_down: AnimatedSprite,
+    anim_left: AnimatedSprite,
+    anim_right: AnimatedSprite,
+}
+
+player_update :: proc(player: ^Player) {
+    move := Vec2 {}
+    new_anim : ^AnimatedSprite = nil
+
+    if input.held[Key.Up] {
+        move.y -= 1;
+        new_anim = &player.anim_up
+    }
+
+    if input.held[Key.Down] {
+        move.y += 1;
+        new_anim = &player.anim_down
+    }
+
+    if input.held[Key.Left] {
+        move.x -= 1;
+        new_anim = &player.anim_left
+    }
+
+    if input.held[Key.Right] {
+        move.x += 1;
+        new_anim = &player.anim_right
+    }
+
+    if (new_anim != nil) {
+        entity_set_animation(player, new_anim)
+    }
+
+    player.pos = vec2_add(player.pos, vec2_mul(vec2_normalize(move), 70 * time.dt));
+    animator_update(&player.animator, vec2_length(move) == 0 ? 0 : time.dt)
+}
+
+entity_set_animation :: proc(entity: ^Entity, animation: ^AnimatedSprite) {
+    if entity.animation == animation {
+        return
+    }
+
+    entity.animation = animation
+    entity.animator = {
+        frame_time = animation.frame_time,
+        num_frames = animation.num_frames,
+    }
+}
+
+entity_render :: proc(entity: ^Entity) {
+    pos := SDL.Rect{i32(entity.pos.x), i32(entity.pos.y), 16, 16};
+    src_rect := SDL.Rect {
+        i32(entity.animation.rects[entity.animator.frame].x),
+        i32(entity.animation.rects[entity.animator.frame].y),
+        i32(entity.animation.rects[entity.animator.frame].w),
+        i32(entity.animation.rects[entity.animator.frame].h),
+    }
+    SDL.RenderCopyEx(renderer, entity.animation.texture, &src_rect, &pos, 0, nil, entity.animation.flip ? SDL.RendererFlip.HORIZONTAL : SDL.RendererFlip.NONE);
+}
+
 main :: proc() {
     SDL.Init(SDL.INIT_EVERYTHING);
     window := SDL.CreateWindow("Karl's Zelda", 200, 200, 1024, 960, SDL.WINDOW_SHOWN);
@@ -155,58 +251,49 @@ main :: proc() {
     IMG.Init(IMG.INIT_PNG);
     TTF.Init();
 
-    texture := load_texture("link.png");
+    texture := load_texture("link.png")
 
     spritedown := init_sprite(texture, Rect{1, 11, 16, 16}, 1)
     spriterightleft := init_sprite(texture, Rect{35, 11, 16, 16}, 1)
     spriteup := init_sprite(texture, Rect{69, 11, 16, 16}, 1)
 
-    cur_spr := &spritedown
+    player := Player {
+        entity = { pos = { 40, 40, } },
+        anim_down = {
+            sprite = spritedown,
+            num_frames = 2,
+            frame_time = 0.1,
+            flip = false,
+        },
+        anim_up = {
+            sprite = spriteup,
+            num_frames = 2,
+            frame_time = 0.1,
+            flip = false,
+        },
+        anim_left = {
+            sprite = spriterightleft,
+            num_frames = 2,
+            frame_time = 0.1,
+            flip = true,
+        },
+        anim_right = {
+            sprite = spriterightleft,
+            num_frames = 2,
+            frame_time = 0.1,
+            flip = false,
+        },
+    }
 
-    font := TTF.OpenFont("arial.ttf", 32);
+    entity_set_animation(&player, &player.anim_down)
+
+  /*  font := TTF.OpenFont("arial.ttf", 32);
     text_surface := TTF.RenderUTF8_Solid(font, "hej gerry du är söt!", SDL.Color{0, 255, 0, 255});
     text_texture := SDL.CreateTextureFromSurface(renderer, text_surface);
-    SDL.FreeSurface(text_surface);
-
-    src_rct := SDL.Rect { 1, 11, 16, 16}
-    pos := Vec2 { x = 40, y = 40 }
-    anim_timer := f32(0)
-    frame := 0
-    flip := false
+    SDL.FreeSurface(text_surface);*/
 
     running := true;
     for running {
-        input_update()
-        time_update()
-
-        move := Vec2 {}
-
-        if input.held[Key.Up] {
-            move.y -= 1;
-            cur_spr = &spriteup
-            flip = false
-        }
-
-        if input.held[Key.Down] {
-            move.y += 1;
-            cur_spr = &spritedown
-            flip = false
-        }
-
-        if input.held[Key.Left] {
-            move.x -= 1;
-            cur_spr = &spriterightleft
-            flip = true
-        }
-
-        if input.held[Key.Right] {
-            move.x += 1;
-            cur_spr = &spriterightleft
-            flip = false
-        }
-
-        pos = vec2_add(pos, vec2_mul(vec2_normalize(move), 70 * time.dt));
-
         e: SDL.Event;
         for SDL.PollEvent(&e) != 0 {
             if e.type == SDL.EventType.QUIT {
@@ -214,29 +301,12 @@ main :: proc() {
             }
         }
 
-        SDL.SetRenderDrawColor(renderer, 70, 150, 70, 255);
-        SDL.RenderClear(renderer);
-
-        if (vec2_length(move) != 0) {
-            anim_timer += time.dt
-        }
-
-        if (anim_timer > 0.1) {
-            anim_timer = 0
-            frame = frame == 0 ? 1 : 0
-        }
-
-        {
-            pos := SDL.Rect{i32(pos.x), i32(pos.y), 16, 16};
-            src_rect := SDL.Rect {
-                i32(cur_spr.rects[frame].x),
-                i32(cur_spr.rects[frame].y),
-                i32(cur_spr.rects[frame].w),
-                i32(cur_spr.rects[frame].h),
-            }
-            SDL.RenderCopyEx(renderer, cur_spr.texture, &src_rect, &pos, 0, nil, flip ? SDL.RendererFlip.HORIZONTAL : SDL.RendererFlip.NONE);
-        }
-
+        input_update()
+        time_update()
+        player_update(&player)
+        SDL.SetRenderDrawColor(renderer, 252, 216, 168, 255)
+        SDL.RenderClear(renderer)
+        entity_render(&player)
         SDL.RenderPresent(renderer)
     }
 
