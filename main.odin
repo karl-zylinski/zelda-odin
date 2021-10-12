@@ -18,20 +18,24 @@ input_update :: proc() {
     keys := SDL.GetKeyboardState(nil)
     input.held = {}
 
-    if keys[SDL.Scancode.UP] != 0 {
-        input.held[Key.Up] = true;
-    }
-
-    if keys[SDL.Scancode.DOWN] != 0 {
-        input.held[Key.Down] = true;
-    }
-
     if keys[SDL.Scancode.LEFT] != 0 {
         input.held[Key.Left] = true;
     }
 
     if keys[SDL.Scancode.RIGHT] != 0 {
         input.held[Key.Right] = true;
+    }
+
+    if keys[SDL.Scancode.UP] != 0 {
+        input.held[Key.Up] = true;
+        input.held[Key.Right] = false;
+        input.held[Key.Left] = false;
+    }
+
+    if keys[SDL.Scancode.DOWN] != 0 {
+        input.held[Key.Down] = true;
+        input.held[Key.Right] = false;
+        input.held[Key.Left] = false;
     }
 
     if keys[SDL.Scancode.Z] != 0 {
@@ -48,6 +52,16 @@ input_update :: proc() {
 
     if keys[SDL.Scancode.SPACE] != 0 {
         input.held[Key.Select] = true;
+    }
+
+    if (input.held[Key.Left] && input.held[Key.Right]) {
+        input.held[Key.Left] = false;
+        input.held[Key.Right] = false;
+    }
+
+    if (input.held[Key.Up] && input.held[Key.Down]) {
+        input.held[Key.Up] = false;
+        input.held[Key.Down] = false;
     }
 }
 
@@ -187,19 +201,23 @@ Player :: struct {
     anim_right: AnimatedSprite,
 }
 
+level := [176]u32 {
+    62,62,62,62,62,62,62,0,0,62,62,62,62,62,62,62,
+    62,62,62,62,29,62,63,0,0,62,62,62,62,62,62,62,
+    62,62,62,63,0,0,0,0,0,62,62,62,62,62,62,62,
+    62,62,63,0,0,0,0,0,0,62,62,62,62,62,62,62,
+    62,63,0,0,0,0,0,0,0,61,62,62,62,62,62,62,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+    44,45,0,0,0,0,0,0,0,0,0,0,0,0,44,44,
+    62,62,0,0,0,0,0,0,0,0,0,0,0,0,62,62,
+    62,62,0,0,0,0,0,0,0,0,0,0,0,0,62,62,
+    62,62,44,44,44,44,44,44,44,44,44,44,44,44,62,62,
+    62,62,62,62,62,62,62,62,62,62,62,62,62,62,62,62,
+}
+
 player_update :: proc(player: ^Player) {
     move := Vec2 {}
     new_anim : ^AnimatedSprite = nil
-
-    if input.held[Key.Up] {
-        move.y -= 1;
-        new_anim = &player.anim_up
-    }
-
-    if input.held[Key.Down] {
-        move.y += 1;
-        new_anim = &player.anim_down
-    }
 
     if input.held[Key.Left] {
         move.x -= 1;
@@ -211,12 +229,31 @@ player_update :: proc(player: ^Player) {
         new_anim = &player.anim_right
     }
 
+    if input.held[Key.Up] {
+        move.y -= 1;
+        new_anim = &player.anim_up
+    }
+
+    if input.held[Key.Down] {
+        move.y += 1;
+        new_anim = &player.anim_down
+    }
+
     if (new_anim != nil) {
         entity_set_animation(player, new_anim)
     }
 
-    player.pos = vec2_add(player.pos, vec2_mul(vec2_normalize(move), 70 * time.dt));
+    to_move := vec2_mul(vec2_normalize(move), 70 * time.dt)
+    player_tile0 := u32(((player.pos.y + move.y - 64 + 16)) / 16) * 16 + u32((player.pos.x + move.x) / 16)
+    player_tile1 := u32(((player.pos.y + move.y - 64 + 16)) / 16) * 16 + u32((player.pos.x + move.x + 16) / 16)
+
+    if player_tile0 < 0 || player_tile1 < 0 || player_tile0 > 176 || player_tile1 > 176 || level[player_tile0] != 0 || level[player_tile1] != 0 {
+        to_move = {}
+    }
+
+    player.pos = vec2_add(player.pos, to_move);
     animator_update(&player.animator, vec2_length(move) == 0 ? 0 : time.dt)
+
 }
 
 entity_set_animation :: proc(entity: ^Entity, animation: ^AnimatedSprite) {
@@ -258,7 +295,7 @@ main :: proc() {
     spriteup := init_sprite(texture, Rect{69, 11, 16, 16}, 1)
 
     player := Player {
-        entity = { pos = { 40, 40, } },
+        entity = { pos = { 90, 120, } },
         anim_down = {
             sprite = spritedown,
             num_frames = 2,
@@ -292,6 +329,8 @@ main :: proc() {
     text_texture := SDL.CreateTextureFromSurface(renderer, text_surface);
     SDL.FreeSurface(text_surface);*/
 
+    tilemap := IMG.LoadTexture(renderer, "tilemap.png")
+
     running := true;
     for running {
         e: SDL.Event;
@@ -304,8 +343,63 @@ main :: proc() {
         input_update()
         time_update()
         player_update(&player)
-        SDL.SetRenderDrawColor(renderer, 252, 216, 168, 255)
+        SDL.SetRenderDrawColor(renderer, 255, 192, 122, 255)
         SDL.RenderClear(renderer)
+
+        for i := 0; i < 64; i += 1 {
+            tile := 23
+
+            if tile == 0 {
+                continue
+            }
+
+            src_x := (tile-1) % 18
+            src_y := (tile-1) / 18
+
+            src_rect := SDL.Rect {
+                i32(src_x * 16 + 1 + src_x),
+                i32(src_y * 16 + 1 + src_y),
+                16,
+                16,
+            }
+
+            dst_rect := SDL.Rect {
+                i32((i % 16) * 16),
+                i32((i / 16) * 16),
+                16,
+                16,
+            }
+
+            SDL.RenderCopy(renderer, tilemap, &src_rect, &dst_rect);
+        }
+
+        for i := 0; i < 176; i += 1 {
+            tile := level[i]
+
+            if tile == 0 {
+                continue
+            }
+
+            src_x := (tile-1) % 18
+            src_y := (tile-1) / 18
+
+            src_rect := SDL.Rect {
+                i32(src_x * 16 + 1 + src_x),
+                i32(src_y * 16 + 1 + src_y),
+                16,
+                16,
+            }
+
+            dst_rect := SDL.Rect {
+                i32((i % 16) * 16),
+                i32((i / 16) * 16) + 16 * 4,
+                16,
+                16,
+            }
+
+            SDL.RenderCopy(renderer, tilemap, &src_rect, &dst_rect);
+        }
+
         entity_render(&player)
         SDL.RenderPresent(renderer)
     }
