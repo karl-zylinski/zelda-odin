@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.5" tiledversion="1.7.2" orientation="orthogonal" renderorder="right-down" width="16" height="11" tilewidth="16" tileheight="16" infinite="0" nextlayerid="3" nextobjectid="1">
+ <tileset firstgid="1" source="Zelda 1.tsx"/>
+ <imagelayer id="2" name="bg">
+  <image source="overworld_green_bg.png" width="256" height="176"/>
+ </imagelayer>
+ <layer id="1" name="Tile Layer 1" width="16" height="11">
+  <data encoding="csv">
+62,62,26,0,26,0,26,0,0,26,0,26,0,26,0,26,
+62,62,26,0,26,0,26,0,0,26,0,26,0,26,0,26,
+62,62,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+62,63,0,0,0,0,26,0,0,26,0,26,0,26,0,0,
+63,0,26,0,26,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,26,0,0,26,0,26,0,26,0,0,
+45,0,26,0,26,0,0,0,0,0,0,0,0,0,0,0,
+62,45,0,0,0,0,26,0,0,26,0,26,0,26,0,0,
+62,62,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+62,62,26,26,26,26,26,26,26,26,26,26,26,26,26,26,
+62,62,26,26,26,26,26,26,26,26,26,26,26,26,26,26
+</data>
+ </layer>
+</map>
