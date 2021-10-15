@@ -202,21 +202,11 @@ Player :: struct {
     anim_right: AnimatedSprite,
 }
 
-level := [176]i32 {
-    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
-    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+Tile :: struct {
+    idx: i16,
 }
 
-cur_level := level
+cur_level := [704]Tile { 0..< 704 = { idx = -1 } }
 
 player_update :: proc(player: ^Player) {
     move := Vec2 {}
@@ -250,9 +240,9 @@ player_update :: proc(player: ^Player) {
     player_tile0 := u32(((player.pos.y + move.y - 64 + 16)) / 16) * 16 + u32((player.pos.x + move.x + 1) / 16)
     player_tile1 := u32(((player.pos.y + move.y - 64 + 16)) / 16) * 16 + u32((player.pos.x + move.x + 16 - 1) / 16)
 
-    if player_tile0 < 0 || player_tile1 < 0 || player_tile0 > 176 || player_tile1 > 176 || cur_level[player_tile0] != -1 || cur_level[player_tile1] != -1 {
+/*    if player_tile0 < 0 || player_tile1 < 0 || player_tile0 > 176 || player_tile1 > 176 || cur_level[player_tile0] != -1 || cur_level[player_tile1] != -1 {
         to_move = {}
-    }
+    }*/
 
     player.pos = vec2_add(player.pos, to_move);
     animator_update(&player.animator, vec2_length(move) == 0 ? 0 : time.dt)
@@ -279,6 +269,14 @@ entity_render :: proc(entity: ^Entity) {
         i32(entity.animation.rects[entity.animator.frame].h),
     }
     SDL.RenderCopyEx(renderer, entity.animation.texture, &src_rect, &pos, 0, nil, entity.animation.flip ? SDL.RendererFlip.HORIZONTAL : SDL.RendererFlip.NONE);
+}
+
+generate_tilemap :: proc(tex: ^SDL.Texture, tilemap: ^[256]Tile) {
+    for i : i16 = 0; i < 256; i += 1 {
+        tilemap[i] = {
+            idx = i,
+        }
+    }
 }
 
 main :: proc() {
@@ -331,9 +329,12 @@ main :: proc() {
     text_texture := SDL.CreateTextureFromSurface(renderer, text_surface);
     SDL.FreeSurface(text_surface);*/
 
-    tilemap := IMG.LoadTexture(renderer, "overworld_green.png")
+    tilemap_img := IMG.LoadTexture(renderer, "overworld_green.png")
 
-    selected_tile := -1
+    tilemap := [256]Tile {}
+    generate_tilemap(tilemap_img, &tilemap)
+
+    selected_tile : i16 = -1
 
     running := true;
     for running {
@@ -355,39 +356,38 @@ main :: proc() {
         mouse_pos.x = mouse_pos.x / 4
         mouse_pos.y = mouse_pos.y / 4
 
-        hover_tile := -1
+        hover_tile : i16 = -1
 
-        for i := 0; i < 128; i += 1 {
-            src_x := i % 16
-            src_y := i / 16
+        for tile_idx := 0; tile_idx < len(tilemap); tile_idx += 1 {
+            tile := &tilemap[tile_idx]
 
             src_rect := SDL.Rect {
-                i32(src_x * 8),
-                i32(src_y * 16),
+                i32((tile.idx % 16) * 8),
+                i32((tile.idx / 16) * 8),
                 8,
-                16,
+                8,
             }
 
             dst_rect := SDL.Rect {
-                i32((i % 32) * 8),
-                i32((i / 32) * 16),
+                i32((tile_idx % 16) * 8 + (tile_idx > len(tilemap)/2 ? 16 * 8 : 0)),
+                i32((tile_idx / 16) * 8 - (tile_idx > len(tilemap)/2 ? 8 * 8 : 0)),
                 8,
-                16,
+                8,
             }
 
-            SDL.RenderCopy(renderer, tilemap, &src_rect, &dst_rect)
+            SDL.RenderCopy(renderer, tilemap_img, &src_rect, &dst_rect)
 
             if SDL.PointInRect(&mouse_pos, &dst_rect) {
-                hover_tile = i
+                hover_tile = i16(tile_idx)
             }
         }
 
-        if hover_tile != -1 {
+       if hover_tile != -1 {
             hover_rect := SDL.Rect {
-                i32((hover_tile % 32) * 8),
-                i32((hover_tile / 32) * 16),
-                16,
-                16,
+                i32((hover_tile % 16) * 8 + (hover_tile > len(tilemap)/2 ? 16 * 8 : 0)),
+                i32((hover_tile / 16) * 8 - (hover_tile > len(tilemap)/2 ? 8 * 8 : 0)),
+                8,
+                8,
             }
 
             SDL.SetRenderDrawColor(renderer, 0x00, 0xFF, 0x00, 0xFF );        
@@ -400,35 +400,35 @@ main :: proc() {
 
         if selected_tile != -1 {
             selected_rect := SDL.Rect {
-                i32((selected_tile % 32) * 8),
-                i32((selected_tile / 32) * 16),
-                16,
-                16,
+                i32((selected_tile % 16) * 8 + (selected_tile > len(tilemap)/2 ? 16 * 8 : 0)),
+                i32((selected_tile / 16) * 8 - (selected_tile > len(tilemap)/2 ? 8 * 8 : 0)),
+                8,
+                8,
             }
 
             SDL.SetRenderDrawColor(renderer, 0xFF, 0x00, 0x00, 0xFF );        
             SDL.RenderDrawRect(renderer, &selected_rect);
         }
 
-        for i := 0; i < 176; i += 1 {
+        for i := 0; i < 704; i += 1 {
             tile := cur_level[i]
 
             dst_rect := SDL.Rect {
-                i32((i % 16) * 16),
-                i32((i / 16) * 16) + 16 * 4,
-                16,
-                16,
+                i32((i % 32) * 8),
+                i32((i / 32) * 8) + 16 * 4,
+                8,
+                8,
             }
 
-            if tile != -1 {
+            if tile.idx != -1 {
                 src_rect := SDL.Rect {
-                    i32((tile % 16) * 8),
-                    i32((tile / 16) * 16),
-                    16,
-                    16,
+                    i32((tile.idx % 16) * 8),
+                    i32((tile.idx / 16) * 8),
+                    8,
+                    8,
                 }
 
-                SDL.RenderCopy(renderer, tilemap, &src_rect, &dst_rect);
+                SDL.RenderCopy(renderer, tilemap_img, &src_rect, &dst_rect);
             }
 
             if SDL.PointInRect(&mouse_pos, &dst_rect) {
@@ -436,11 +436,11 @@ main :: proc() {
                 SDL.RenderDrawRect(renderer, &dst_rect);
 
                 if selected_tile != -1 && mouse_button == SDL.BUTTON_LEFT {
-                    cur_level[i] = i32(selected_tile)
+                    cur_level[i] = tilemap[selected_tile]
                 }
 
                 if mouse_button == 4 {
-                    cur_level[i] = i32(-1)
+                    cur_level[i] = Tile { idx = -1 }
                 }
             }
         }
