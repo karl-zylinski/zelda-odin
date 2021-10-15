@@ -348,6 +348,8 @@ main :: proc() {
     brush := Brush {}
     selected_tile : i16 = -1
 
+    last_mouse_up := true
+
     running := true;
     for running {
         e: SDL.Event;
@@ -365,6 +367,11 @@ main :: proc() {
 
         mouse_pos := SDL.Point{}
         mouse_button := SDL.GetMouseState(&mouse_pos.x, &mouse_pos.y)
+
+        if (mouse_button != SDL.BUTTON_LEFT) {
+            last_mouse_up = true
+        }
+
         mouse_pos.x = mouse_pos.x / 4
         mouse_pos.y = mouse_pos.y / 4
 
@@ -408,7 +415,12 @@ main :: proc() {
             SDL.RenderDrawRect(renderer, &hover_rect);
 
             if mouse_button == SDL.BUTTON_LEFT {
+                if last_mouse_up {
+                    brush.tiles = {}
+                }
+
                 append(&brush.tiles, hover_tile)
+                last_mouse_up = false
             }
         }
 
@@ -450,10 +462,7 @@ main :: proc() {
             }
 
             if SDL.PointInRect(&mouse_pos, &dst_rect) {
-                SDL.SetRenderDrawColor(renderer, 0xFF, 0xFF, 0x00, 0xFF);        
-                SDL.RenderDrawRect(renderer, &dst_rect);
-
-                if len(brush.tiles) > 0 && mouse_button == SDL.BUTTON_LEFT{
+                if len(brush.tiles) > 0 {
                     lowest_x, lowest_y : u16 = 5000, 5000
 
                     for t in brush.tiles {
@@ -471,10 +480,26 @@ main :: proc() {
                     for t in brush.tiles {
                         tile := &tilemap[t]
 
-                        xdiff := tile.coord_x - lowest_x
-                        ydiff := tile.coord_y - lowest_y
+                        r := dst_rect
+                        r.x += i32((tile.coord_x - lowest_x) * 8)
+                        r.y += i32((tile.coord_y - lowest_y) * 8)
 
-                        cur_level[u16(i) + xdiff + ydiff * 32] = tilemap[t]
+                        SDL.SetRenderDrawColor(renderer, 0xFF, 0xFF, 0x00, 0xFF);        
+                        SDL.RenderDrawRect(renderer, &r);
+                    }
+
+                    if mouse_button == SDL.BUTTON_LEFT{
+                        for t in brush.tiles {
+                            tile := &tilemap[t]
+
+                            xdiff := tile.coord_x - lowest_x
+                            ydiff := tile.coord_y - lowest_y
+                            idx := u16(i) + xdiff + ydiff * 32
+
+                            if idx < len(cur_level) {
+                                cur_level[idx] = tilemap[t]
+                            }
+                        }
                     }
                 }
 
