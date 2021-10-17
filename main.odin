@@ -7,10 +7,16 @@ import "core:fmt"
 import "core:math"
 import "core:c"
 
+EditorKey :: enum { Flip };
 Key :: enum { Up, Down, Left, Right, A, B, Select, Start };
 
 Input :: struct {
+    held_editor_key: [len(EditorKey)]bool,
     held: [len(Key)]bool,
+    mouse_pos: Vec2,
+    mouse_held: bool,
+    mouse_clicked: bool,
+    right_button_held: bool,
 }
 
 input : Input
@@ -18,6 +24,7 @@ input : Input
 input_update :: proc() {
     keys := SDL.GetKeyboardState(nil)
     input.held = {}
+    input.held_editor_key = {}
 
     if keys[SDL.Scancode.LEFT] != 0 {
         input.held[Key.Left] = true;
@@ -64,6 +71,29 @@ input_update :: proc() {
         input.held[Key.Up] = false;
         input.held[Key.Down] = false;
     }
+
+    if keys[SDL.Scancode.F] != 0 {
+        input.held_editor_key[EditorKey.Flip] = true
+    }
+
+    mouse_pos := SDL.Point{}
+    mouse_button := SDL.GetMouseState(&mouse_pos.x, &mouse_pos.y)
+
+    input.mouse_pos.x = f32(mouse_pos.x / 4)
+    input.mouse_pos.y = f32(mouse_pos.y / 4)
+    left_mouse_down := mouse_button == SDL.BUTTON_LEFT
+    input.mouse_clicked = false
+
+    if (!input.mouse_held && left_mouse_down) {
+        input.mouse_clicked = true
+    }
+
+    input.right_button_held = false
+    if (mouse_button == 4) {
+        input.right_button_held = true
+    }
+
+    input.mouse_held = left_mouse_down
 }
 
 Vec2 :: struct {
@@ -206,6 +236,7 @@ Tile :: struct {
     idx: i16,
     coord_x: u16,
     coord_y: u16,
+    flip: bool,
 }
 
 cur_level := [704]Tile { 0..< 704 = { idx = -1 } }
@@ -290,6 +321,156 @@ Brush :: struct {
     tiles: [dynamic]i16,
 }
 
+EditorState :: struct {
+    brush: Brush,
+}
+
+vec2_to_sdl_point :: proc(v: Vec2) -> SDL.Point {
+    return SDL.Point { i32(v.x), i32(v.y) }
+}
+
+editor_state := EditorState {}
+
+update_editor :: proc(tilemap: ^[256]Tile, tilemap_img: ^SDL.Texture) {
+    hover_tile :i16= -1
+    mouse_pos := vec2_to_sdl_point(input.mouse_pos)
+
+    for tile_idx := 0; tile_idx < len(tilemap); tile_idx += 1 {
+        tile := &tilemap[tile_idx]
+
+        src_rect := SDL.Rect {
+            i32((tile.idx % 16) * 8),
+            i32((tile.idx / 16) * 8),
+            8,
+            8,
+        }
+
+        dst_rect := SDL.Rect {
+            i32(tile.coord_x * 8),
+            i32(tile.coord_y * 8),
+            8,
+            8,
+        }
+
+        SDL.RenderCopy(renderer, tilemap_img, &src_rect, &dst_rect)
+
+        if SDL.PointInRect(&mouse_pos, &dst_rect) {
+            hover_tile = i16(tile_idx)
+        }
+    }
+
+    if hover_tile != -1 {
+        tile := &tilemap[hover_tile]
+
+        hover_rect := SDL.Rect {
+            i32(tile.coord_x * 8),
+            i32(tile.coord_y * 8),
+            8,
+            8,
+        }
+
+        SDL.SetRenderDrawColor(renderer, 0x00, 0xFF, 0x00, 0xFF );        
+        SDL.RenderDrawRect(renderer, &hover_rect);
+
+        if input.mouse_held {
+            if input.mouse_clicked {
+                editor_state.brush.tiles = {}
+            }
+
+            append(&editor_state.brush.tiles, hover_tile)
+        }
+    }
+
+    if len(editor_state.brush.tiles) > 0 {
+        for t in editor_state.brush.tiles {
+            tile := &tilemap[t]
+
+            selected_rect := SDL.Rect {
+                i32(tile.coord_x * 8),
+                i32(tile.coord_y * 8),
+                8,
+                8,
+            }
+
+            SDL.SetRenderDrawColor(renderer, 0xFF, 0x00, 0x00, 0xFF );        
+            SDL.RenderDrawRect(renderer, &selected_rect);
+        }
+    }
+
+    for i := 0; i < 704; i += 1 {
+        tile := cur_level[i]
+
+        dst_rect := SDL.Rect {
+            i32((i % 32) * 8),
+            i32((i / 32) * 8) + 16 * 4,
+            8,
+            8,
+        }
+
+        if tile.idx != -1 {
+            src_rect := SDL.Rect {
+                i32((tile.idx % 16) * 8),
+                i32((tile.idx / 16) * 8),
+                8,
+                8,
+            }
+
+            SDL.RenderCopy(renderer, tilemap_img, &src_rect, &dst_rect);
+        }
+
+        if SDL.PointInRect(&mouse_pos, &dst_rect) {
+            if len(editor_state.brush.tiles) > 0 {
+                lowest_x, lowest_y : u16 = 5000, 5000
+
+                for t in editor_state.brush.tiles {
+                    tile := &tilemap[t]
+
+                    if tile.coord_x < lowest_x {
+                        lowest_x = tile.coord_x
+                    }
+
+                    if tile.coord_y < lowest_y {
+                        lowest_y = tile.coord_y
+                    }
+                }
+
+                for t in editor_state.brush.tiles {
+                    tile := &tilemap[t]
+
+                    r := dst_rect
+                    r.x += i32((tile.coord_x - lowest_x) * 8)
+                    r.y += i32((tile.coord_y - lowest_y) * 8)
+
+                    SDL.SetRenderDrawColor(renderer, 0xFF, 0xFF, 0x00, 0xFF);        
+                    SDL.RenderDrawRect(renderer, &r);
+                }
+
+                if input.mouse_held {
+                    for t in editor_state.brush.tiles {
+                        tile := &tilemap[t]
+
+                        xdiff := tile.coord_x - lowest_x
+                        ydiff := tile.coord_y - lowest_y
+                        idx := u16(i) + xdiff + ydiff * 32
+
+                        if idx < len(cur_level) {
+                            cur_level[idx] = tilemap[t]
+
+                            if input.held_editor_key[EditorKey.Flip] {
+                                cur_level[idx].flip = true
+                            }
+                        }
+                    }
+                }
+            }
+
+            if input.right_button_held {
+                cur_level[i] = Tile { idx = -1 }
+            }
+        }
+    }
+}
+
 main :: proc() {
     SDL.Init(SDL.INIT_EVERYTHING);
     window := SDL.CreateWindow("Karl's Zelda", 200, 200, 1024, 960, SDL.WINDOW_SHOWN);
@@ -298,6 +479,9 @@ main :: proc() {
 
     IMG.Init(IMG.INIT_PNG);
     TTF.Init();
+
+    editor_active := true
+    editor_state := EditorState {}
 
     texture := load_texture("link.png")
 
@@ -365,79 +549,8 @@ main :: proc() {
         SDL.SetRenderDrawColor(renderer, 252, 216, 168, 255)
         SDL.RenderClear(renderer)
 
-        mouse_pos := SDL.Point{}
-        mouse_button := SDL.GetMouseState(&mouse_pos.x, &mouse_pos.y)
-
-        if (mouse_button != SDL.BUTTON_LEFT) {
-            last_mouse_up = true
-        }
-
-        mouse_pos.x = mouse_pos.x / 4
-        mouse_pos.y = mouse_pos.y / 4
-
-        hover_tile : i16 = -1
-
-        for tile_idx := 0; tile_idx < len(tilemap); tile_idx += 1 {
-            tile := &tilemap[tile_idx]
-
-            src_rect := SDL.Rect {
-                i32((tile.idx % 16) * 8),
-                i32((tile.idx / 16) * 8),
-                8,
-                8,
-            }
-
-            dst_rect := SDL.Rect {
-                i32(tile.coord_x * 8),
-                i32(tile.coord_y * 8),
-                8,
-                8,
-            }
-
-            SDL.RenderCopy(renderer, tilemap_img, &src_rect, &dst_rect)
-
-            if SDL.PointInRect(&mouse_pos, &dst_rect) {
-                hover_tile = i16(tile_idx)
-            }
-        }
-
-       if hover_tile != -1 {
-            tile := &tilemap[hover_tile]
-
-            hover_rect := SDL.Rect {
-                i32(tile.coord_x * 8),
-                i32(tile.coord_y * 8),
-                8,
-                8,
-            }
-
-            SDL.SetRenderDrawColor(renderer, 0x00, 0xFF, 0x00, 0xFF );        
-            SDL.RenderDrawRect(renderer, &hover_rect);
-
-            if mouse_button == SDL.BUTTON_LEFT {
-                if last_mouse_up {
-                    brush.tiles = {}
-                }
-
-                append(&brush.tiles, hover_tile)
-                last_mouse_up = false
-            }
-        }
-
-        if len(brush.tiles) > 0 {
-            for t in brush.tiles {
-                tile := &tilemap[t]
-
-                selected_rect := SDL.Rect {
-                    i32(tile.coord_x * 8),
-                    i32(tile.coord_y * 8),
-                    8,
-                    8,
-                }
-
-                SDL.SetRenderDrawColor(renderer, 0xFF, 0x00, 0x00, 0xFF );        
-                SDL.RenderDrawRect(renderer, &selected_rect);
-            }
+        if (editor_active) {
+            update_editor(&tilemap, tilemap_img)
         }
 
         for i := 0; i < 704; i += 1 {
@@ -458,54 +571,7 @@ main :: proc() {
                     8,
                 }
 
-                SDL.RenderCopy(renderer, tilemap_img, &src_rect, &dst_rect);
-            }
-
-            if SDL.PointInRect(&mouse_pos, &dst_rect) {
-                if len(brush.tiles) > 0 {
-                    lowest_x, lowest_y : u16 = 5000, 5000
-
-                    for t in brush.tiles {
-                        tile := &tilemap[t]
-
-                        if tile.coord_x < lowest_x {
-                            lowest_x = tile.coord_x
-                        }
-
-                        if tile.coord_y < lowest_y {
-                            lowest_y = tile.coord_y
-                        }
-                    }
-
-                    for t in brush.tiles {
-                        tile := &tilemap[t]
-
-                        r := dst_rect
-                        r.x += i32((tile.coord_x - lowest_x) * 8)
-                        r.y += i32((tile.coord_y - lowest_y) * 8)
-
-                        SDL.SetRenderDrawColor(renderer, 0xFF, 0xFF, 0x00, 0xFF);        
-                        SDL.RenderDrawRect(renderer, &r);
-                    }
-
-                    if mouse_button == SDL.BUTTON_LEFT{
-                        for t in brush.tiles {
-                            tile := &tilemap[t]
-
-                            xdiff := tile.coord_x - lowest_x
-                            ydiff := tile.coord_y - lowest_y
-                            idx := u16(i) + xdiff + ydiff * 32
-
-                            if idx < len(cur_level) {
-                                cur_level[idx] = tilemap[t]
-                            }
-                        }
-                    }
-                }
-
-                if mouse_button == 4 {
-                    cur_level[i] = Tile { idx = -1 }
-                }
+                SDL.RenderCopyEx(renderer, tilemap_img, &src_rect, &dst_rect, 0, nil, tile.flip ? SDL.RendererFlip.HORIZONTAL : SDL.RendererFlip.NONE);
             }
         }
 
