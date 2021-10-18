@@ -6,14 +6,18 @@ import TTF "vendor:sdl2/ttf"
 import "core:fmt"
 import "core:math"
 import "core:c"
+import "core:os"
+import "core:mem"
+import "core:math/linalg"
 
-EditorKey :: enum { Flip };
+EditorKey :: enum { Flip, Save };
 Key :: enum { Up, Down, Left, Right, A, B, Select, Start };
 
 Input :: struct {
     held_editor_key: [len(EditorKey)]bool,
+    pressed_editor_key: [len(EditorKey)]bool,
     held: [len(Key)]bool,
-    mouse_pos: Vec2,
+    mouse_pos: [2]i32,
     mouse_held: bool,
     mouse_clicked: bool,
     right_button_held: bool,
@@ -24,7 +28,7 @@ input : Input
 input_update :: proc() {
     keys := SDL.GetKeyboardState(nil)
     input.held = {}
-    input.held_editor_key = {}
+    input.pressed_editor_key = {}
 
     if keys[SDL.Scancode.LEFT] != 0 {
         input.held[Key.Left] = true;
@@ -74,13 +78,25 @@ input_update :: proc() {
 
     if keys[SDL.Scancode.F] != 0 {
         input.held_editor_key[EditorKey.Flip] = true
+    } else {
+        input.held_editor_key[EditorKey.Flip] = false
+    }
+
+    if keys[SDL.Scancode.S] != 0 {
+        if !input.held_editor_key[EditorKey.Save] {
+            input.pressed_editor_key[EditorKey.Save] = true
+        }
+
+        input.held_editor_key[EditorKey.Save] = true
+    } else {
+        input.held_editor_key[EditorKey.Save] = false
     }
 
     mouse_pos := SDL.Point{}
     mouse_button := SDL.GetMouseState(&mouse_pos.x, &mouse_pos.y)
 
-    input.mouse_pos.x = f32(mouse_pos.x / 4)
-    input.mouse_pos.y = f32(mouse_pos.y / 4)
+    input.mouse_pos.x = mouse_pos.x / 4
+    input.mouse_pos.y = mouse_pos.y / 4
     left_mouse_down := mouse_button == SDL.BUTTON_LEFT
     input.mouse_clicked = false
 
@@ -94,38 +110,6 @@ input_update :: proc() {
     }
 
     input.mouse_held = left_mouse_down
-}
-
-Vec2 :: struct {
-    x, y: f32,
-}
-
-vec2_add :: proc(a: Vec2, b: Vec2) -> Vec2 {
-    return Vec2 {
-        x = a.x + b.x,
-        y = a.y + b.y,
-    }
-}
-
-vec2_mul :: proc(v: Vec2, s: f32) -> Vec2 {
-    return Vec2 {
-        x = v.x * s,
-        y = v.y * s,
-    }
-}
-
-vec2_length :: proc(v: Vec2) -> f32 {
-    return math.sqrt(v.x * v.x + v.y * v.y)
-}
-
-vec2_normalize :: proc(v: Vec2) -> Vec2 {
-    l := vec2_length(v)
-
-    if (l == 0) {
-        return Vec2 {}
-    }
-
-    return vec2_mul(v, 1/l)
 }
 
 Rect :: struct {
@@ -219,7 +203,7 @@ animator_update :: proc(a: ^Animator, dt: f32) {
 }
 
 Entity :: struct {
-    pos: Vec2,
+    pos: [2]i32,
     animation: ^AnimatedSprite,
     animator: Animator,
 }
@@ -242,7 +226,7 @@ Tile :: struct {
 cur_level := [704]Tile { 0..< 704 = { idx = -1 } }
 
 player_update :: proc(player: ^Player) {
-    move := Vec2 {}
+    move := [2]i32 {}
     new_anim : ^AnimatedSprite = nil
 
     if input.held[Key.Left] {
@@ -269,16 +253,15 @@ player_update :: proc(player: ^Player) {
         entity_set_animation(player, new_anim)
     }
 
-    to_move := vec2_mul(vec2_normalize(move), 70 * time.dt)
-    player_tile0 := u32(((player.pos.y + move.y - 64 + 16)) / 16) * 16 + u32((player.pos.x + move.x + 1) / 16)
-    player_tile1 := u32(((player.pos.y + move.y - 64 + 16)) / 16) * 16 + u32((player.pos.x + move.x + 16 - 1) / 16)
+    player_tile0 := u32(((player.pos.y + move.y - 64 + 16)) / 8) * 32 + u32((player.pos.x + move.x + 1) / 8)
+    player_tile1 := u32(((player.pos.y + move.y - 64 + 16)) / 8) * 32 + u32((player.pos.x + move.x + 16 - 1) / 8)
 
-/*    if player_tile0 < 0 || player_tile1 < 0 || player_tile0 > 176 || player_tile1 > 176 || cur_level[player_tile0] != -1 || cur_level[player_tile1] != -1 {
-        to_move = {}
-    }*/
+    if player_tile0 < 0 || player_tile1 < 0 || player_tile0 > 704 || player_tile1 > 704 || cur_level[player_tile0].idx != -1 || cur_level[player_tile1].idx != -1  {
+        move = {}
+    }
 
-    player.pos = vec2_add(player.pos, to_move);
-    animator_update(&player.animator, vec2_length(move) == 0 ? 0 : time.dt)
+    player.pos = player.pos + move;
+    animator_update(&player.animator, linalg.length2(move) == 0 ? 0 : time.dt)
 }
 
 entity_set_animation :: proc(entity: ^Entity, animation: ^AnimatedSprite) {
@@ -308,8 +291,8 @@ generate_tilemap :: proc(tex: ^SDL.Texture, tilemap: ^[256]Tile) {
     for i : i16 = 0; i < 256; i += 1 {
         tilemap[i] = {
             idx = i,
-            coord_x = u16((i % 16) + (i > len(tilemap)/2 ? 16 : 0)),
-            coord_y = u16((i / 16) - (i > len(tilemap)/2 ? 8 : 0)),
+            coord_x = u16((i % 16) + (i >= len(tilemap)/2 ? 16 : 0)),
+            coord_y = u16((i / 16) - (i >= len(tilemap)/2 ? 8 : 0)),
         }
     }
 }
@@ -323,9 +306,11 @@ Brush :: struct {
 
 EditorState :: struct {
     brush: Brush,
+    brush_start: [2]i32,
+    brush_size: [2]i32,
 }
 
-vec2_to_sdl_point :: proc(v: Vec2) -> SDL.Point {
+vec2_to_sdl_point :: proc(v: [2]i32) -> SDL.Point {
     return SDL.Point { i32(v.x), i32(v.y) }
 }
 
@@ -397,12 +382,15 @@ update_editor :: proc(tilemap: ^[256]Tile, tilemap_img: ^SDL.Texture) {
         }
     }
 
-    for i := 0; i < 704; i += 1 {
+    for i :i32= 0; i < 704; i += 1 {
         tile := cur_level[i]
 
+        x :i32= i % 32
+        y :i32= i / 32
+
         dst_rect := SDL.Rect {
-            i32((i % 32) * 8),
-            i32((i / 32) * 8) + 16 * 4,
+            i32(x * 8),
+            i32(y * 8) + 16 * 4,
             8,
             8,
         }
@@ -446,20 +434,37 @@ update_editor :: proc(tilemap: ^[256]Tile, tilemap_img: ^SDL.Texture) {
                 }
 
                 if input.mouse_held {
+                    size := [2]u16{}
                     for t in editor_state.brush.tiles {
                         tile := &tilemap[t]
 
                         xdiff := tile.coord_x - lowest_x
                         ydiff := tile.coord_y - lowest_y
+
+                        if xdiff > size.x {
+                            size.x = xdiff
+                        }
+
+                        if ydiff > size.y {
+                            size.y = ydiff
+                        }
+
+                        fmt.println(editor_state.brush_size)
+
                         idx := u16(i) + xdiff + ydiff * 32
 
-                        if idx < len(cur_level) {
+                        if !input.mouse_clicked && (x - editor_state.brush_start.x) % editor_state.brush_size.x == 0 && (y - editor_state.brush_start.y) % editor_state.brush_size.y == 0 && idx < len(cur_level) {
                             cur_level[idx] = tilemap[t]
 
                             if input.held_editor_key[EditorKey.Flip] {
                                 cur_level[idx].flip = true
                             }
                         }
+                    }
+
+                    if input.mouse_clicked {
+                        editor_state.brush_start = {i32(x), i32(y)}
+                        editor_state.brush_size = {i32(size.x) + 1, i32(size.y) + 1}
                     }
                 }
             }
@@ -479,6 +484,16 @@ main :: proc() {
 
     IMG.Init(IMG.INIT_PNG);
     TTF.Init();
+
+    {
+        f, err := os.open("level")
+        defer os.close(f)
+
+        if err == 0 {
+            os.read(f, mem.slice_data_cast([]u8, cur_level[:]))
+        }
+    }
+    
 
     editor_active := true
     editor_state := EditorState {}
@@ -577,6 +592,15 @@ main :: proc() {
 
         entity_render(&player)
         SDL.RenderPresent(renderer)
+
+        if (input.pressed_editor_key[EditorKey.Save]) {
+            f, err := os.open("level", os.O_WRONLY | os.O_CREATE)
+            defer os.close(f)
+
+            if err == 0 {
+                os.write(f, mem.slice_data_cast([]u8, cur_level[:]))
+            }
+        }
     }
 
     SDL.Quit();
