@@ -9,6 +9,7 @@ import "core:c"
 import "core:os"
 import "core:mem"
 import "core:math/linalg"
+import "core:runtime"
 
 scaling :: 4
 
@@ -479,6 +480,10 @@ update_editor :: proc(tilemap: ^[256]Tile, tilemap_img: ^SDL.Texture) {
 }
 
 main :: proc() {
+    tracking_allocator: mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracking_allocator, runtime.default_allocator())
+    allocator := mem.tracking_allocator(&tracking_allocator)
+    context.allocator = allocator
     SDL.Init(SDL.INIT_EVERYTHING);
     window := SDL.CreateWindow("Karl's Zelda", 200, 200, 256 * scaling, 240 * scaling, SDL.WINDOW_SHOWN);
     renderer = SDL.CreateRenderer(window, -1, SDL.RENDERER_ACCELERATED | SDL.RENDERER_PRESENTVSYNC)
@@ -605,5 +610,12 @@ main :: proc() {
         }
     }
 
+    shutdown_texture_storage()
     SDL.Quit();
+
+    for key, value in tracking_allocator.allocation_map {
+        fmt.printf("%v: Leaked %v bytes\n", value.location, value.size)
+    }
+
+    mem.tracking_allocator_destroy(&tracking_allocator);
 }
