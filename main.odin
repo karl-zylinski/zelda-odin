@@ -10,6 +10,8 @@ import "core:os"
 import "core:mem"
 import "core:math/linalg"
 
+scaling :: 4
+
 EditorKey :: enum { Flip, Save };
 Key :: enum { Up, Down, Left, Right, A, B, Select, Start };
 
@@ -95,8 +97,8 @@ input_update :: proc() {
     mouse_pos := SDL.Point{}
     mouse_button := SDL.GetMouseState(&mouse_pos.x, &mouse_pos.y)
 
-    input.mouse_pos.x = mouse_pos.x / 4
-    input.mouse_pos.y = mouse_pos.y / 4
+    input.mouse_pos.x = mouse_pos.x / scaling
+    input.mouse_pos.y = mouse_pos.y / scaling
     left_mouse_down := mouse_button == SDL.BUTTON_LEFT
     input.mouse_clicked = false
 
@@ -478,7 +480,7 @@ update_editor :: proc(tilemap: ^[256]Tile, tilemap_img: ^SDL.Texture) {
 
 main :: proc() {
     SDL.Init(SDL.INIT_EVERYTHING);
-    window := SDL.CreateWindow("Karl's Zelda", 200, 200, 1024, 960, SDL.WINDOW_SHOWN);
+    window := SDL.CreateWindow("Karl's Zelda", 200, 200, 256 * scaling, 240 * scaling, SDL.WINDOW_SHOWN);
     renderer = SDL.CreateRenderer(window, -1, SDL.RENDERER_ACCELERATED | SDL.RENDERER_PRESENTVSYNC)
     SDL.RenderSetLogicalSize(renderer, 256, 240)
 
