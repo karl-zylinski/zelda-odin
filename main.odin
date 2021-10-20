@@ -14,85 +14,53 @@ import "core:runtime"
 scaling :: 4
 
 EditorKey :: enum { Flip, Save };
-Key :: enum { Up, Down, Left, Right, A, B, Select, Start };
+Key :: enum { None, Up, Down, Left, Right, A, B, Select, Start };
 
 Input :: struct {
     held_editor_key: [len(EditorKey)]bool,
     pressed_editor_key: [len(EditorKey)]bool,
-    held: [len(Key)]bool,
     mouse_pos: [2]i32,
     mouse_held: bool,
     mouse_clicked: bool,
     right_button_held: bool,
+
+    pressed_keys: [len(Key)]bool,
+    released_keys: [len(Key)]bool,
+    held_keys: [len(Key)]bool,
 }
 
 input : Input
 
-input_update :: proc() {
-    keys := SDL.GetKeyboardState(nil)
-    input.held = {}
-    input.pressed_editor_key = {}
+sdl_scancode_to_key :: proc(scancode: SDL.Scancode) -> Key {
+    using SDL.Scancode
 
-    if keys[SDL.Scancode.LEFT] != 0 {
-        input.held[Key.Left] = true;
+    #partial switch scancode {
+        case LEFT: return Key.Left
+        case RIGHT: return Key.Right
+        case UP: return Key.Up
+        case DOWN: return Key.Down
+        case Z: return Key.A
+        case X: return Key.B
+        case RETURN: return Key.Start
+        case SPACE: return Key.Select
     }
 
-    if keys[SDL.Scancode.RIGHT] != 0 {
-        input.held[Key.Right] = true;
-    }
+    return Key.None
+}
 
-    if keys[SDL.Scancode.UP] != 0 {
-        input.held[Key.Up] = true;
-        input.held[Key.Right] = false;
-        input.held[Key.Left] = false;
-    }
+input_update :: proc(keydowns: [dynamic]SDL.Keysym, keyups: [dynamic]SDL.Keysym) {
+    input.pressed_keys = {}
 
-    if keys[SDL.Scancode.DOWN] != 0 {
-        input.held[Key.Down] = true;
-        input.held[Key.Right] = false;
-        input.held[Key.Left] = false;
-    }
+    for key in keydowns {
+        key := sdl_scancode_to_key(key.scancode)
+        input.pressed_keys[key] = true;
+        input.held_keys[key] = true;
+    }   
 
-    if keys[SDL.Scancode.Z] != 0 {
-        input.held[Key.A] = true;
-    }
-
-    if keys[SDL.Scancode.X] != 0 {
-        input.held[Key.B] = true;
-    }
-
-    if keys[SDL.Scancode.RETURN] != 0 {
-        input.held[Key.Start] = true;
-    }
-
-    if keys[SDL.Scancode.SPACE] != 0 {
-        input.held[Key.Select] = true;
-    }
-
-    if (input.held[Key.Left] && input.held[Key.Right]) {
-        input.held[Key.Left] = false;
-        input.held[Key.Right] = false;
-    }
-
-    if (input.held[Key.Up] && input.held[Key.Down]) {
-        input.held[Key.Up] = false;
-        input.held[Key.Down] = false;
-    }
-
-    if keys[SDL.Scancode.F] != 0 {
-        input.held_editor_key[EditorKey.Flip] = true
-    } else {
-        input.held_editor_key[EditorKey.Flip] = false
-    }
-
-    if keys[SDL.Scancode.S] != 0 {
-        if !input.held_editor_key[EditorKey.Save] {
-            input.pressed_editor_key[EditorKey.Save] = true
-        }
-
-        input.held_editor_key[EditorKey.Save] = true
-    } else {
-        input.held_editor_key[EditorKey.Save] = false
+    for key in keyups {
+        key := sdl_scancode_to_key(key.scancode)
+        input.released_keys[key] = true;
+        input.held_keys[key] = false;
     }
 
     mouse_pos := SDL.Point{}
@@ -232,22 +200,22 @@ player_update :: proc(player: ^Player) {
     move := [2]i32 {}
     new_anim : ^AnimatedSprite = nil
 
-    if input.held[Key.Left] {
+    if input.held_keys[Key.Left] {
         move.x -= 1;
         new_anim = &player.anim_left
     }
 
-    if input.held[Key.Right] {
+    if input.held_keys[Key.Right] {
         move.x += 1;
         new_anim = &player.anim_right
     }
 
-    if input.held[Key.Up] {
+    if input.held_keys[Key.Up] {
         move.y -= 1;
         new_anim = &player.anim_up
     }
 
-    if input.held[Key.Down] {
+    if input.held_keys[Key.Down] {
         move.y += 1;
         new_anim = &player.anim_down
     }
@@ -452,8 +420,6 @@ update_editor :: proc(tilemap: ^[256]Tile, tilemap_img: ^SDL.Texture) {
                             size.y = ydiff
                         }
 
-                        fmt.println(editor_state.brush_size)
-
                         idx := u16(i) + xdiff + ydiff * 32
 
                         if !input.mouse_clicked && (x - editor_state.brush_start.x) % editor_state.brush_size.x == 0 && (y - editor_state.brush_start.y) % editor_state.brush_size.y == 0 && idx < len(cur_level) {
@@ -479,7 +445,15 @@ update_editor :: proc(tilemap: ^[256]Tile, tilemap_img: ^SDL.Texture) {
     }
 }
 
+test :: proc() {
+    defer fmt.println("HEJ")
+}
+
 main :: proc() {
+    {
+        test()
+        fmt.println("hoo")
+    }
     tracking_allocator: mem.Tracking_Allocator
     mem.tracking_allocator_init(&tracking_allocator, runtime.default_allocator())
     allocator := mem.tracking_allocator(&tracking_allocator)
@@ -558,14 +532,20 @@ main :: proc() {
 
     running := true;
     for running {
+        keydowns := make([dynamic]SDL.Keysym, context.temp_allocator)
+        keyups := make([dynamic]SDL.Keysym, context.temp_allocator)
         e: SDL.Event;
         for SDL.PollEvent(&e) != 0 {
             if e.type == SDL.EventType.QUIT {
                 running = false;
+            } else if e.type == SDL.EventType.KEYDOWN {
+                append(&keydowns, e.key.keysym)
+            } else if e.type == SDL.EventType.KEYUP {
+                append(&keyups, e.key.keysym)
             }
         }
 
-        input_update()
+        input_update(keydowns, keyups)
         time_update()
         player_update(&player)
         SDL.SetRenderDrawColor(renderer, 252, 216, 168, 255)
