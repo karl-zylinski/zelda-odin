@@ -13,12 +13,10 @@ import "core:runtime"
 
 scaling :: 4
 
-EditorKey :: enum { Flip, Save };
+EditorKey :: enum { None, Flip, Save };
 Key :: enum { None, Up, Down, Left, Right, A, B, Select, Start };
 
 Input :: struct {
-    held_editor_key: [len(EditorKey)]bool,
-    pressed_editor_key: [len(EditorKey)]bool,
     mouse_pos: [2]i32,
     mouse_held: bool,
     mouse_clicked: bool,
@@ -27,6 +25,10 @@ Input :: struct {
     pressed_keys: [len(Key)]bool,
     released_keys: [len(Key)]bool,
     held_keys: [len(Key)]bool,
+
+    pressed_editor_keys: [len(EditorKey)]bool,
+    released_editor_keys: [len(EditorKey)]bool,
+    held_editor_keys: [len(EditorKey)]bool,
 }
 
 input : Input
@@ -48,19 +50,36 @@ sdl_scancode_to_key :: proc(scancode: SDL.Scancode) -> Key {
     return Key.None
 }
 
+sdl_scancode_to_editor_key :: proc(scancode: SDL.Scancode) -> EditorKey {
+    using SDL.Scancode
+
+    #partial switch scancode {
+        case F: return EditorKey.Flip
+        case S: return EditorKey.Save
+    }
+
+    return EditorKey.None
+}
+
 input_update :: proc(keydowns: [dynamic]SDL.Keysym, keyups: [dynamic]SDL.Keysym) {
     input.pressed_keys = {}
 
-    for key in keydowns {
-        key := sdl_scancode_to_key(key.scancode)
+    for keydown in keydowns {
+        key := sdl_scancode_to_key(keydown.scancode)
         input.pressed_keys[key] = true;
         input.held_keys[key] = true;
+        editor_key := sdl_scancode_to_editor_key(keydown.scancode)
+        input.pressed_editor_keys[editor_key] = true;
+        input.held_editor_keys[editor_key] = true;
     }   
 
-    for key in keyups {
-        key := sdl_scancode_to_key(key.scancode)
+    for keyup in keyups {
+        key := sdl_scancode_to_key(keyup.scancode)
         input.released_keys[key] = true;
         input.held_keys[key] = false;
+        editor_key := sdl_scancode_to_editor_key(keyup.scancode)
+        input.released_editor_keys[editor_key] = true;
+        input.held_editor_keys[editor_key] = false;
     }
 
     mouse_pos := SDL.Point{}
@@ -330,6 +349,7 @@ update_editor :: proc(tilemap: ^[256]Tile, tilemap_img: ^SDL.Texture) {
 
         if input.mouse_held {
             if input.mouse_clicked {
+                delete(editor_state.brush.tiles)
                 editor_state.brush.tiles = {}
             }
 
@@ -425,7 +445,7 @@ update_editor :: proc(tilemap: ^[256]Tile, tilemap_img: ^SDL.Texture) {
                         if !input.mouse_clicked && (x - editor_state.brush_start.x) % editor_state.brush_size.x == 0 && (y - editor_state.brush_start.y) % editor_state.brush_size.y == 0 && idx < len(cur_level) {
                             cur_level[idx] = tilemap[t]
 
-                            if input.held_editor_key[EditorKey.Flip] {
+                            if input.held_editor_keys[EditorKey.Flip] {
                                 cur_level[idx].flip = true
                             }
                         }
@@ -580,7 +600,7 @@ main :: proc() {
         entity_render(&player)
         SDL.RenderPresent(renderer)
 
-        if (input.pressed_editor_key[EditorKey.Save]) {
+        if (input.pressed_editor_keys[EditorKey.Save]) {
             f, err := os.open("level", os.O_WRONLY | os.O_CREATE)
             defer os.close(f)
 
@@ -590,6 +610,7 @@ main :: proc() {
         }
     }
 
+    delete(editor_state.brush.tiles)
     shutdown_texture_storage()
     SDL.Quit();
 
