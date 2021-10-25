@@ -13,14 +13,19 @@ import "core:runtime"
 
 scaling :: 4
 
-EditorKey :: enum { None, Flip, Save };
+EditorKey :: enum { None, Flip, Save, ToggleEditor, Shift };
 Key :: enum { None, Up, Down, Left, Right, A, B, Select, Start };
 
 Input :: struct {
     mouse_pos: [2]i32,
-    mouse_held: bool,
-    mouse_clicked: bool,
-    right_button_held: bool,
+
+    left_mouse_pressed: bool,
+    left_mouse_released: bool,
+    left_mouse_held: bool,
+
+    right_mouse_pressed: bool,
+    right_mouse_released: bool,
+    right_mouse_held: bool,
 
     pressed_keys: [len(Key)]bool,
     released_keys: [len(Key)]bool,
@@ -56,50 +61,12 @@ sdl_scancode_to_editor_key :: proc(scancode: SDL.Scancode) -> EditorKey {
     #partial switch scancode {
         case F: return EditorKey.Flip
         case S: return EditorKey.Save
+        case E: return EditorKey.ToggleEditor
+        case LSHIFT: return EditorKey.Shift
+        case RSHIFT: return EditorKey.Shift
     }
 
     return EditorKey.None
-}
-
-input_update :: proc(keydowns: [dynamic]SDL.Keysym, keyups: [dynamic]SDL.Keysym) {
-    input.pressed_keys = {}
-
-    for keydown in keydowns {
-        key := sdl_scancode_to_key(keydown.scancode)
-        input.pressed_keys[key] = true;
-        input.held_keys[key] = true;
-        editor_key := sdl_scancode_to_editor_key(keydown.scancode)
-        input.pressed_editor_keys[editor_key] = true;
-        input.held_editor_keys[editor_key] = true;
-    }   
-
-    for keyup in keyups {
-        key := sdl_scancode_to_key(keyup.scancode)
-        input.released_keys[key] = true;
-        input.held_keys[key] = false;
-        editor_key := sdl_scancode_to_editor_key(keyup.scancode)
-        input.released_editor_keys[editor_key] = true;
-        input.held_editor_keys[editor_key] = false;
-    }
-
-    mouse_pos := SDL.Point{}
-    mouse_button := SDL.GetMouseState(&mouse_pos.x, &mouse_pos.y)
-
-    input.mouse_pos.x = mouse_pos.x / scaling
-    input.mouse_pos.y = mouse_pos.y / scaling
-    left_mouse_down := mouse_button == SDL.BUTTON_LEFT
-    input.mouse_clicked = false
-
-    if (!input.mouse_held && left_mouse_down) {
-        input.mouse_clicked = true
-    }
-
-    input.right_button_held = false
-    if (mouse_button == 4) {
-        input.right_button_held = true
-    }
-
-    input.mouse_held = left_mouse_down
 }
 
 Rect :: struct {
@@ -112,12 +79,6 @@ Time :: struct {
 }
 
 time: Time
-
-time_update :: proc() {
-    prev_timer := time.timer
-    time.timer = SDL.GetPerformanceCounter()
-    time.dt = f32(f64(time.timer - prev_timer) / f64(SDL.GetPerformanceFrequency()));
-}
 
 renderer: ^SDL.Renderer
 texture_lookup: map[string]^SDL.Texture
@@ -347,8 +308,8 @@ update_editor :: proc(tilemap: ^[256]Tile, tilemap_img: ^SDL.Texture) {
         SDL.SetRenderDrawColor(renderer, 0x00, 0xFF, 0x00, 0xFF );        
         SDL.RenderDrawRect(renderer, &hover_rect);
 
-        if input.mouse_held {
-            if input.mouse_clicked {
+        if input.left_mouse_held {
+            if input.left_mouse_pressed {
                 delete(editor_state.brush.tiles)
                 editor_state.brush.tiles = {}
             }
@@ -386,17 +347,6 @@ update_editor :: proc(tilemap: ^[256]Tile, tilemap_img: ^SDL.Texture) {
             8,
         }
 
-        if tile.idx != -1 {
-            src_rect := SDL.Rect {
-                i32((tile.idx % 16) * 8),
-                i32((tile.idx / 16) * 8),
-                8,
-                8,
-            }
-
-            SDL.RenderCopy(renderer, tilemap_img, &src_rect, &dst_rect);
-        }
-
         if SDL.PointInRect(&mouse_pos, &dst_rect) {
             if len(editor_state.brush.tiles) > 0 {
                 lowest_x, lowest_y : u16 = 5000, 5000
@@ -424,7 +374,7 @@ update_editor :: proc(tilemap: ^[256]Tile, tilemap_img: ^SDL.Texture) {
                     SDL.RenderDrawRect(renderer, &r);
                 }
 
-                if input.mouse_held {
+                if input.left_mouse_held {
                     size := [2]u16{}
                     for t in editor_state.brush.tiles {
                         tile := &tilemap[t]
@@ -441,8 +391,9 @@ update_editor :: proc(tilemap: ^[256]Tile, tilemap_img: ^SDL.Texture) {
                         }
 
                         idx := u16(i) + xdiff + ydiff * 32
+                        can_place := !input.left_mouse_pressed && (input.held_editor_keys[EditorKey.Shift] || ((x - editor_state.brush_start.x) % editor_state.brush_size.x == 0 && (y - editor_state.brush_start.y) % editor_state.brush_size.y == 0))
 
-                        if !input.mouse_clicked && (x - editor_state.brush_start.x) % editor_state.brush_size.x == 0 && (y - editor_state.brush_start.y) % editor_state.brush_size.y == 0 && idx < len(cur_level) {
+                        if can_place && idx < len(cur_level) {
                             cur_level[idx] = tilemap[t]
 
                             if input.held_editor_keys[EditorKey.Flip] {
@@ -451,15 +402,24 @@ update_editor :: proc(tilemap: ^[256]Tile, tilemap_img: ^SDL.Texture) {
                         }
                     }
 
-                    if input.mouse_clicked {
+                    if input.left_mouse_pressed || input.right_mouse_pressed {
                         editor_state.brush_start = {i32(x), i32(y)}
                         editor_state.brush_size = {i32(size.x) + 1, i32(size.y) + 1}
                     }
                 }
-            }
 
-            if input.right_button_held {
-                cur_level[i] = Tile { idx = -1 }
+                if input.right_mouse_held {
+                    for t in editor_state.brush.tiles {
+                        tile := &tilemap[t]
+
+                        xdiff := tile.coord_x - lowest_x
+                        ydiff := tile.coord_y - lowest_y
+
+                        idx := u16(i) + xdiff + ydiff * 32
+
+                        cur_level[idx] = Tile { idx = -1 }
+                    }
+                }
             }
         }
     }
@@ -552,28 +512,72 @@ main :: proc() {
 
     running := true;
     for running {
-        keydowns := make([dynamic]SDL.Keysym, context.temp_allocator)
-        keyups := make([dynamic]SDL.Keysym, context.temp_allocator)
+        {
+            input.pressed_keys = {}
+            input.released_keys = {}
+            input.pressed_editor_keys = {}
+            input.released_editor_keys = {}
+
+            input.left_mouse_pressed = false
+            input.left_mouse_released = false
+
+            input.right_mouse_pressed = false
+            input.right_mouse_released = false
+        }
+
         e: SDL.Event;
         for SDL.PollEvent(&e) != 0 {
             if e.type == SDL.EventType.QUIT {
                 running = false;
             } else if e.type == SDL.EventType.KEYDOWN {
-                append(&keydowns, e.key.keysym)
+                key := sdl_scancode_to_key(e.key.keysym.scancode)
+                input.pressed_keys[key] = true;
+                input.held_keys[key] = true;
+                editor_key := sdl_scancode_to_editor_key(e.key.keysym.scancode)
+                input.pressed_editor_keys[editor_key] = true;
+                input.held_editor_keys[editor_key] = true;    
             } else if e.type == SDL.EventType.KEYUP {
-                append(&keyups, e.key.keysym)
+                key := sdl_scancode_to_key(e.key.keysym.scancode)
+                input.released_keys[key] = true;
+                input.held_keys[key] = false;
+                editor_key := sdl_scancode_to_editor_key(e.key.keysym.scancode)
+                input.released_editor_keys[editor_key] = true;
+                input.held_editor_keys[editor_key] = false;
+            } else if e.type == SDL.EventType.MOUSEBUTTONDOWN && e.button.state == SDL.PRESSED {
+                if e.button.button == 1 {
+                    input.left_mouse_pressed = true
+                    input.left_mouse_held = true
+                } else if e.button.button == 3 {
+                    input.right_mouse_pressed = true
+                    input.right_mouse_held = true
+                }
+            } else if e.type == SDL.EventType.MOUSEBUTTONUP && e.button.state == SDL.RELEASED {
+                if e.button.button == 1 {
+                    input.left_mouse_released = true
+                    input.left_mouse_held = false
+                } else if e.button.button == 3 {
+                    input.right_mouse_released = true
+                    input.right_mouse_held = false
+                }
+            } else if e.type == SDL.EventType.MOUSEMOTION {
+                input.mouse_pos.x = e.motion.x
+                input.mouse_pos.y = e.motion.y
             }
         }
 
-        input_update(keydowns, keyups)
-        time_update()
+        if input.pressed_editor_keys[EditorKey.ToggleEditor] {
+            editor_active = !editor_active
+        }
+
+        {
+            prev_timer := time.timer
+            time.timer = SDL.GetPerformanceCounter()
+            time.dt = f32(f64(time.timer - prev_timer) / f64(SDL.GetPerformanceFrequency()));
+        }
+
         player_update(&player)
         SDL.SetRenderDrawColor(renderer, 252, 216, 168, 255)
         SDL.RenderClear(renderer)
-
-        if (editor_active) {
-            update_editor(&tilemap, tilemap_img)
-        }
 
         for i := 0; i < 704; i += 1 {
             tile := cur_level[i]
@@ -598,6 +602,11 @@ main :: proc() {
         }
 
         entity_render(&player)
+
+        if (editor_active) {
+            update_editor(&tilemap, tilemap_img)
+        }
+
         SDL.RenderPresent(renderer)
 
         if (input.pressed_editor_keys[EditorKey.Save]) {
