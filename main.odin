@@ -526,7 +526,7 @@ main :: proc() {
         }
 
         e: SDL.Event;
-        for SDL.PollEvent(&e) != 0 {
+        for SDL.PollEvent(&e) {
             if e.type == SDL.EventType.QUIT {
                 running = false;
             } else if e.type == SDL.EventType.KEYDOWN {
